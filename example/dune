@@ -1,0 +1,6 @@
+(executable
+ (public_name dream-totp-auth)
+ (name main)
+ (preprocess
+  (pps lwt_ppx))
+ (libraries dream argon2 twostep))
