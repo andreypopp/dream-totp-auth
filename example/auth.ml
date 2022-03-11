@@ -107,12 +107,27 @@ let login ~username ~password req =
 let verify_login ~totp req =
   match%lwt auth req with
   | `Auth_awaiting_totp user ->
-    if User.verify_totp user ~totp then
+    if%lwt User.verify_totp user ~totp then
       let%lwt () = Auth_state.set req (Auth_state_ok user.User.username) in
       Lwt.return (`Auth_ok user)
     else
       Lwt.return (`Auth_awaiting_totp user)
   | (`Auth_none | `Auth_ok _) as auth -> Lwt.return auth
+
+let totp_enable ~totp ~secret user =
+  let user = { user with User.totp = Totp_enabled secret } in
+  if%lwt User.verify_totp user ~totp then
+    let%lwt () = User_repo.store user in
+    Lwt.return_ok ()
+  else
+    Lwt.return_error "Invalid TOTP"
+
+let totp_disable ~totp user =
+  if%lwt User.verify_totp user ~totp then
+    let%lwt () = User_repo.store { user with User.totp = Totp_disabled } in
+    Lwt.return_ok ()
+  else
+    Lwt.return_error "Invalid TOTP"
 
 let logout req = Auth_state.drop req
 

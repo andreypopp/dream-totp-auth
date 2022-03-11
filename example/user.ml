@@ -6,25 +6,19 @@ type t = {
 
 and totp =
   | Totp_disabled
-  | Totp_enabled of { secret : string }
+  | Totp_enabled of Totp.secret
 
 let make ~username ~password () =
-  let password_hash =
-    match Password.hash password with
-    | Ok password_hash -> password_hash
-    | Error err -> failwith err
-  in
+  let password_hash = Password.hash password in
   { username; password_hash; totp = Totp_disabled }
 
 let verify_password ~password user =
-  match Password.verify ~hash:user.password_hash password with
-  | Ok ok -> ok
-  | Error err -> failwith err
+  Password.verify ~hash:user.password_hash password
 
 let verify_totp ~totp user =
   match user.totp with
   | Totp_disabled ->
     (* The reasoning here is that if user has no TOTP enabled then we cannot
        verify any TOTP code. *)
-    false
-  | Totp_enabled { secret } -> Twostep.TOTP.verify ~secret ~code:totp ()
+    Lwt.return false
+  | Totp_enabled secret -> Totp.verify secret ~totp ~id:user.username

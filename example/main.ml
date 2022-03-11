@@ -53,15 +53,10 @@ module Page = struct
   let totp_form user req =
     match user.User.totp with
     | Totp_disabled ->
-      let secret = Twostep.TOTP.secret () in
+      let secret = Totp.make_secret () in
       let qr =
-        let appname = "Dream OCaml" in
-        let uri =
-          spf "otpauth://totp/%s:%s?secret=%s" appname user.User.username secret
-        in
-        match Qrc.encode uri with
-        | Some qr -> qr
-        | None -> assert false
+        Totp.secret_to_svg secret ~appname:"Dream OCaml"
+          ~username:user.User.username
       in
       Lwt.return
       @@ spf
@@ -75,7 +70,9 @@ module Page = struct
              <button type="submit">Enable</button>
            </form>
            |}
-           (Dream.csrf_tag req) secret (Qrc.Matrix.to_svg qr)
+           (Dream.csrf_tag req)
+           (Totp.secret_to_string secret)
+           qr
     | Totp_enabled _ ->
       Lwt.return
       @@ spf
@@ -194,26 +191,19 @@ let totp_enable user req =
     Form.(
       let+ code = field "code"
       and+ secret = field "secret" in
-      Ok (code, secret))
+      Ok (code, Totp.secret_of_string secret))
   in
   response_of_result req
     ( Form.validate form req >>= fun (totp, secret) ->
-      let user = { user with User.totp = Totp_enabled { secret } } in
-      if User.verify_totp user ~totp then
-        let%lwt () = User_repo.store user in
-        Lwt.return_ok (Some "Two Factor Authentication enabled!")
-      else
-        Lwt.return_error "Invalid TOTP" )
+      Auth.totp_enable user ~totp ~secret >>= fun () ->
+      Lwt.return_ok (Some "Two Factor Authentication enabled!") )
 
 let totp_disable user req =
   let open Lwt_result.Infix in
   response_of_result req
     ( Form.validate (Form.field "code") req >>= fun totp ->
-      if User.verify_totp user ~totp then
-        let%lwt () = User_repo.store { user with User.totp = Totp_disabled } in
-        Lwt.return_ok (Some "Two Factor Authentication disabled!")
-      else
-        Lwt.return_error "invalid TOTP" )
+      Auth.totp_disable user ~totp >>= fun () ->
+      Lwt.return_ok (Some "Two Factor Authentication disabled!") )
 
 let logout _user req =
   let open Lwt_result.Infix in

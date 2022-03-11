@@ -30,5 +30,10 @@ val login :
 val verify_login : totp:string -> Dream.request -> auth_result Lwt.t
 (** Verify TOTP and perform an auth state transition. *)
 
+val totp_enable :
+  totp:string -> secret:Totp.secret -> User.t -> (unit, string) Lwt_result.t
+
+val totp_disable : totp:string -> User.t -> (unit, string) Lwt_result.t
+
 val logout : Dream.request -> unit Lwt.t
 (** Performs a loggout. *)

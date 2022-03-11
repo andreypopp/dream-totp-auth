@@ -35,11 +35,7 @@ let _minimum_params =
     salt_len = 16;
   }
 
-let to_string_error result = Result.map_error Argon2.ErrorCodes.message result
-
 let hash password =
-  to_string_error
-  @@
   let {
     time_cost = t_cost;
     memory_cost_kiB = m_cost;
@@ -62,8 +58,10 @@ let hash password =
   in
 
   match encoded with
-  | Result.Ok encoded -> Result.Ok (Hash.encoded_to_string encoded)
-  | Result.Error e -> Result.Error e
+  | Ok encoded -> Hash.encoded_to_string encoded
+  | Error e -> failwith (Argon2.ErrorCodes.message e)
 
 let verify ~hash password =
-  to_string_error @@ Argon2.verify ~encoded:hash ~pwd:password ~kind:ID
+  match Argon2.verify ~encoded:hash ~pwd:password ~kind:ID with
+  | Ok result -> result
+  | Error e -> failwith (Argon2.ErrorCodes.message e)
