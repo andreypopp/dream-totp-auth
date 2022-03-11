@@ -1,4 +1,8 @@
 module Auth_state : sig
+  (** Authentication state stored in session. Note that [Auth_state_ok] and
+      [Auth_state_awaiting_totp] should be validated further for the present of
+      a user account in a repository. *)
+
   type t =
     | Auth_state_none
     | Auth_state_ok of string
@@ -113,12 +117,9 @@ let verify_login ~totp req =
 let logout req = Auth_state.drop req
 
 let user req =
-  match Auth_state.get req with
-  | Auth_state_ok username -> (
-    match%lwt User_repo.find username with
-    | None -> Lwt.return_none
-    | Some user -> Lwt.return_some user)
-  | Auth_state_awaiting_totp _ | Auth_state_none -> Lwt.return_none
+  match%lwt auth req with
+  | `Auth_ok user -> Lwt.return_some user
+  | `Auth_awaiting_totp _ | `Auth_none -> Lwt.return_none
 
 let with_user handler req =
   match%lwt user req with

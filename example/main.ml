@@ -57,8 +57,7 @@ module Page = struct
       let qr =
         let appname = "Dream OCaml" in
         let uri =
-          spf "otpauth://totp/%s: %s?secret=%s" appname user.User.username
-            secret
+          spf "otpauth://totp/%s:%s?secret=%s" appname user.User.username secret
         in
         match Qrc.encode uri with
         | Some qr -> qr
