@@ -1,0 +1,39 @@
+opam-version: "2.0"
+synopsis: "An example app with password/totp auth"
+description: """
+An example app with password/totp auth.
+"""
+homepage: "https://github.com/andreypopp/dream-totp-auth"
+maintainer: "Andrey Popp <me@andreypopp.com>"
+authors: ["Andrey Popp <me@andreypopp.com>"]
+bug-reports: "https://github.com/andreypopp/dream-totp-auth/issues"
+depends: [
+  "dream" {>= "1.0.0~alpha4"}
+  "dune" {>= "3.0.3"}
+  "qrc" {= "dev"}
+  "twostep" {= "dev"}
+  "argon2"
+  "lwt_ppx"
+  "yojson"
+  "odoc" {with-doc}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "--promote-install-files=false"
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+  ["dune" "install" "-p" name "--create-install-files" name]
+]
+pin-depends: [
+  ["qrc.dev" "git+https://github.com/dbuenzli/qrc.git#e745481"]
+  ["twostep.dev" "git+https://github.com/andreypopp/twostep.git#729e6b3"]
+]
