@@ -20,20 +20,23 @@ type auth_result =
   | `Auth_ok of User.t ]
 (** This type represents a state of authentication. *)
 
-val auth : Dream.request -> auth_result Lwt.t
-(** Authentication state of the [req]. *)
-
 val login :
   username:string -> password:string -> Dream.request -> auth_result Lwt.t
 (** Verify username/password and perform an auth state transition. *)
 
-val verify_login : totp:string -> Dream.request -> auth_result Lwt.t
+val verify_login :
+  password:string -> totp:string -> Dream.request -> auth_result Lwt.t
 (** Verify TOTP and perform an auth state transition. *)
 
 val totp_enable :
-  totp:string -> secret:Totp.secret -> User.t -> (unit, string) Lwt_result.t
+  password:string ->
+  totp:string ->
+  secret:string ->
+  User.t ->
+  (unit, string) Lwt_result.t
 
-val totp_disable : totp:string -> User.t -> (unit, string) Lwt_result.t
+val totp_disable :
+  password:string -> totp:string -> User.t -> (unit, string) Lwt_result.t
 
 val logout : Dream.request -> unit Lwt.t
 (** Performs a loggout. *)

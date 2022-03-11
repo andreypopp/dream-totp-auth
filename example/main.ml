@@ -21,8 +21,25 @@ module Page = struct
           .flash-error { color: red; }
           .flash-success { color: green; }
         </style>
+        <script>
+          function flash(category, text) {
+            let messages = document.getElementById('messages');
+            messages.innerHTML = `<p class="flash-${category}">${category}: ${text}</p>`;
+          }
+          function submit(form) {
+  let data = new FormData(form);
+  let params = new URLSearchParams(data);
+            return fetch(form.action, {
+              method: form.method,
+              body: params.toString(),
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+              }
+            });
+          }
+        </script>
         <body>
-          <div>%s</div>
+          <div id="messages">%s</div>
           <div>%s</div>
         </body>
       |}
@@ -32,27 +49,69 @@ module Page = struct
     Lwt.return
     @@ spf
          {|
-         <form action="/auth/login" method="POST">
+         <h3>Login</h3>
+         <form action="/auth/login" method="POST" id="login">
            %s
-           <h3>Login</h3>
            <label>Username: <input type="text" name="username" /></label>
            <label>Password: <input type="password" name="password" /></label>
            <button type="submit">Login</button>
          </form>
+         <form action="/auth/login/verify" method="POST" id="login-verify"
+           style="display: none">
+           %s
+           <input type="hidden" name="password" value="" />
+           <label>Enter code: <input type="text" name="code" /></label>
+           <button type="submit">Login</button>
+         </form>
+         <script>
+            let login = document.getElementById('login');
+            let loginVerify = document.getElementById('login-verify');
+            login.onsubmit = (ev) => {
+              ev.preventDefault();
+              let password = login.querySelector('input[name="password"]').value
+              submit(login).then(async resp => {
+                if (resp.ok) {
+                  let body = await resp.text();
+                  if (body.trim() === 'totp') {
+                    loginVerify.querySelector('input[name="password"]').value = password;
+                    login.style.display = 'none';
+                    loginVerify.style.display = 'block';
+                  } else {
+                    window.location.reload();
+                  }
+                } else {
+                  let body = await resp.text();
+                  flash('error', body.trim());
+                }
+              });
+            }
+            loginVerify.onsubmit = (ev) => {
+              ev.preventDefault();
+              submit(loginVerify).then(async resp => {
+                if (resp.ok) {
+                  window.location.reload();
+                } else {
+                  let body = await resp.text();
+                  flash('error', body.trim());
+                }
+              });
+            };
+         </script>
+         <hr />
+         <h3>Register</h3>
          <form action="/auth/register" method="POST">
            %s
-           <h3>Register</h3>
            <label>Username: <input type="text" name="username" /></label>
            <label>Password: <input type="password" name="password" /></label>
            <label>Confirm password: <input type="password" name="confirm_password" /></label>
            <button type="submit">Register</button>
          </form>
         |}
-         (Dream.csrf_tag req) (Dream.csrf_tag req)
+         (Dream.csrf_tag req) (Dream.csrf_tag req) (Dream.csrf_tag req)
 
   let totp_form user req =
-    match user.User.totp with
-    | Totp_disabled ->
+    match user.User.totp_secret_cipher with
+    | None ->
       let secret = Totp.make_secret () in
       let qr =
         Totp.secret_to_svg secret ~appname:"Dream OCaml"
@@ -67,13 +126,12 @@ module Page = struct
              <input type="hidden" name="secret" value="%s" />
              %s
              <label>Enter code: <input type="text" name="code" /></label>
+             <label>Password: <input type="password" name="password" /></label>
              <button type="submit">Enable</button>
            </form>
            |}
-           (Dream.csrf_tag req)
-           (Totp.secret_to_string secret)
-           qr
-    | Totp_enabled _ ->
+           (Dream.csrf_tag req) secret qr
+    | Some _ ->
       Lwt.return
       @@ spf
            {|
@@ -81,6 +139,7 @@ module Page = struct
            <form action="/auth/totp/disable" method="POST">
              %s
              <label>Enter code: <input type="text" name="code" /></label>
+             <label>Password: <input type="password" name="password" /></label>
              <button type="submit">Disable</button>
            </form>
            |}
@@ -100,26 +159,11 @@ module Page = struct
          |}
          user.User.username (Dream.csrf_tag req) totp_form
 
-  let content_awaiting_verification user req =
-    Lwt.return
-    @@ spf
-         {|
-         <h3>Welcome, %s!</h3>
-         <h4>Please verify login with TOTP</h4>
-         <form action="/auth/login/verify" method="POST">
-           %s
-           <label>Enter code: <input type="text" name="code" /></label>
-           <button type="submit">Login</button>
-         </form>
-         |}
-         user.User.username (Dream.csrf_tag req)
-
   let main req =
     let%lwt content =
-      match%lwt Auth.auth req with
-      | `Auth_none -> content_anonymous req
-      | `Auth_awaiting_totp user -> content_awaiting_verification user req
-      | `Auth_ok user -> content_authenticated user req
+      match%lwt Auth.user req with
+      | None -> content_anonymous req
+      | Some user -> content_authenticated user req
     in
     chrome req content
 end
@@ -160,6 +204,11 @@ let register req =
       Auth.register ~username ~password req >>= fun _user ->
       Lwt.return_ok (Some "Registered!") )
 
+let login_response_of_result result =
+  match%lwt result with
+  | Ok body -> Dream.respond ~status:`OK body
+  | Error msg -> Dream.respond ~status:`Forbidden msg
+
 (** Login form handler checks user's password and transition authentication
     state. *)
 let login req =
@@ -170,18 +219,25 @@ let login req =
       and+ password = field "password" in
       Ok (username, password))
   in
-  response_of_result req
+  login_response_of_result
     ( Form.validate form req >>= fun (username, password) ->
       match%lwt Auth.login ~username ~password req with
       | `Auth_none -> Lwt.return_error "incorrect username or password"
-      | `Auth_awaiting_totp _ | `Auth_ok _ -> Lwt.return_ok None )
+      | `Auth_awaiting_totp _ -> Lwt.return_ok "totp"
+      | `Auth_ok _ -> Lwt.return_ok "ok" )
 
 let login_verify req =
   let open Lwt_result.Infix in
-  response_of_result req
-    ( Form.validate (Form.field "code") req >>= fun totp ->
-      match%lwt Auth.verify_login req ~totp with
-      | `Auth_ok _ -> Lwt.return_ok None
+  let form =
+    Form.(
+      let+ code = field "code"
+      and+ password = field "password" in
+      Ok (code, password))
+  in
+  login_response_of_result
+    ( Form.validate form req >>= fun (totp, password) ->
+      match%lwt Auth.verify_login req ~totp ~password with
+      | `Auth_ok _ -> Lwt.return_ok "ok"
       | `Auth_none -> Lwt.return_error "something gone wrong, please try again"
       | `Auth_awaiting_totp _ -> Lwt.return_error "invalid TOTP" )
 
@@ -190,19 +246,26 @@ let totp_enable user req =
   let form =
     Form.(
       let+ code = field "code"
-      and+ secret = field "secret" in
-      Ok (code, Totp.secret_of_string secret))
+      and+ secret = field "secret"
+      and+ password = field "password" in
+      Ok (code, secret, password))
   in
   response_of_result req
-    ( Form.validate form req >>= fun (totp, secret) ->
-      Auth.totp_enable user ~totp ~secret >>= fun () ->
+    ( Form.validate form req >>= fun (totp, secret, password) ->
+      Auth.totp_enable user ~totp ~secret ~password >>= fun () ->
       Lwt.return_ok (Some "Two Factor Authentication enabled!") )
 
 let totp_disable user req =
   let open Lwt_result.Infix in
+  let form =
+    Form.(
+      let+ code = field "code"
+      and+ password = field "password" in
+      Ok (code, password))
+  in
   response_of_result req
-    ( Form.validate (Form.field "code") req >>= fun totp ->
-      Auth.totp_disable user ~totp >>= fun () ->
+    ( Form.validate form req >>= fun (totp, password) ->
+      Auth.totp_disable user ~totp ~password >>= fun () ->
       Lwt.return_ok (Some "Two Factor Authentication disabled!") )
 
 let logout _user req =

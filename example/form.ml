@@ -30,4 +30,9 @@ let validate' form (fields : (string * string) list) =
 let validate form req =
   match%lwt Dream.form req with
   | `Ok fields -> Lwt.return (validate' form fields)
-  | _ -> Lwt.return_error "invalid form submission"
+  | `Expired _ -> Lwt.return_error "invalid form submission"
+  | `Wrong_session _ -> Lwt.return_error "invalid form submission"
+  | `Invalid_token _ -> Lwt.return_error "invalid form submission"
+  | `Missing_token _ -> Lwt.return_error "invalid form submission"
+  | `Many_tokens _ -> Lwt.return_error "invalid form submission"
+  | `Wrong_content_type -> Lwt.return_error "invalid form submission"

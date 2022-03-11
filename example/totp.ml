@@ -1,5 +1,3 @@
-type secret = string
-
 let secret_to_uri ~appname ~username secret =
   Printf.sprintf "otpauth://totp/%s:%s?secret=%s" appname username secret
 
@@ -9,8 +7,6 @@ let secret_to_svg ~appname ~username secret =
   | None -> assert false
 
 let make_secret () = Twostep.TOTP.secret ()
-let secret_to_string s = s
-let secret_of_string s = s
 
 module Seen = struct
   (* a very naive storage for used TOTP codes *)

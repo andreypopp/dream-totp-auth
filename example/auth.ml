@@ -94,40 +94,47 @@ let login ~username ~password req =
     match User.verify_password user ~password with
     | true ->
       let auth, result =
-        match user.totp with
-        | Totp_enabled _ ->
+        match user.totp_secret_cipher with
+        | Some _ ->
           ( Auth_state.Auth_state_awaiting_totp username,
             `Auth_awaiting_totp user )
-        | Totp_disabled -> (Auth_state_ok username, `Auth_ok user)
+        | None -> (Auth_state_ok username, `Auth_ok user)
       in
       let%lwt () = Auth_state.set req auth in
       Lwt.return result
     | false -> Lwt.return `Auth_none)
 
-let verify_login ~totp req =
+let verify_login ~password ~totp req =
   match%lwt auth req with
   | `Auth_awaiting_totp user ->
-    if%lwt User.verify_totp user ~totp then
+    if%lwt User.verify_totp user ~password ~totp then
       let%lwt () = Auth_state.set req (Auth_state_ok user.User.username) in
       Lwt.return (`Auth_ok user)
     else
       Lwt.return (`Auth_awaiting_totp user)
   | (`Auth_none | `Auth_ok _) as auth -> Lwt.return auth
 
-let totp_enable ~totp ~secret user =
-  let user = { user with User.totp = Totp_enabled secret } in
-  if%lwt User.verify_totp user ~totp then
-    let%lwt () = User_repo.store user in
-    Lwt.return_ok ()
+let totp_enable ~password ~totp ~secret user =
+  if User.verify_password user ~password then
+    let user = User.set_totp_secret user ~password ~secret:(Some secret) in
+    if%lwt User.verify_totp user ~password ~totp then
+      let%lwt () = User_repo.store user in
+      Lwt.return_ok ()
+    else
+      Lwt.return_error "Invalid TOTP"
   else
-    Lwt.return_error "Invalid TOTP"
+    Lwt.return_error "Invalid password"
 
-let totp_disable ~totp user =
-  if%lwt User.verify_totp user ~totp then
-    let%lwt () = User_repo.store { user with User.totp = Totp_disabled } in
-    Lwt.return_ok ()
+let totp_disable ~password ~totp user =
+  if User.verify_password user ~password then
+    if%lwt User.verify_totp user ~password ~totp then
+      let user = User.set_totp_secret user ~password ~secret:None in
+      let%lwt () = User_repo.store user in
+      Lwt.return_ok ()
+    else
+      Lwt.return_error "Invalid TOTP"
   else
-    Lwt.return_error "Invalid TOTP"
+    Lwt.return_error "Invalid password"
 
 let logout req = Auth_state.drop req
 
