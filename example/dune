@@ -3,4 +3,4 @@
  (name main)
  (preprocess
   (pps lwt_ppx))
- (libraries dream argon2 twostep qrc))
+ (libraries dream argon2 twostep qrc yojson))
