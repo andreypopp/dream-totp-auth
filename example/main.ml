@@ -1,7 +1,7 @@
-module Page_template = struct
+module Page = struct
   let spf = Printf.sprintf
 
-  let make_page req content =
+  let chrome req content =
     let messages =
       Dream.flash_messages req
       |> List.map (fun (category, text) ->
@@ -32,22 +32,22 @@ module Page_template = struct
     Lwt.return
     @@ spf
          {|
-    <form action="/auth/login" method="POST">
-      %s
-      <h3>Login</h3>
-      <label>Username: <input type="text" name="username" /></label>
-      <label>Password: <input type="password" name="password" /></label>
-      <button type="submit">Login</button>
-    </form>
-    <form action="/auth/register" method="POST">
-      %s
-      <h3>Register</h3>
-      <label>Username: <input type="text" name="username" /></label>
-      <label>Password: <input type="password" name="password" /></label>
-      <label>Confirm password: <input type="password" name="confirm_password" /></label>
-      <button type="submit">Register</button>
-    </form>
-  |}
+         <form action="/auth/login" method="POST">
+           %s
+           <h3>Login</h3>
+           <label>Username: <input type="text" name="username" /></label>
+           <label>Password: <input type="password" name="password" /></label>
+           <button type="submit">Login</button>
+         </form>
+         <form action="/auth/register" method="POST">
+           %s
+           <h3>Register</h3>
+           <label>Username: <input type="text" name="username" /></label>
+           <label>Password: <input type="password" name="password" /></label>
+           <label>Confirm password: <input type="password" name="confirm_password" /></label>
+           <button type="submit">Register</button>
+         </form>
+        |}
          (Dream.csrf_tag req) (Dream.csrf_tag req)
 
   let totp_form user req =
@@ -125,15 +125,20 @@ module Page_template = struct
       | `Auth_awaiting_totp user -> content_awaiting_verification user req
       | `Auth_ok user -> content_authenticated user req
     in
-    make_page req content
+    chrome req content
 end
 
-let handle_action req result =
+type handler_result = (string option, string) Lwt_result.t
+(** Form handlers return either an optional message in case of a success or an
+    error message in case of an error. *)
+
+(** We use [response_of_result] to convert [handler_result] into
+    [Dream.response]. *)
+let response_of_result req result =
   let%lwt () =
     match%lwt result with
-    | Ok None -> Lwt.return ()
-    | Ok (Some msg) ->
-      Dream.add_flash_message req "success" msg;
+    | Ok msg ->
+      Option.iter (Dream.add_flash_message req "success") msg;
       Lwt.return ()
     | Error msg ->
       Dream.add_flash_message req "error" msg;
@@ -141,55 +146,44 @@ let handle_action req result =
   in
   Dream.redirect req "/"
 
+(** Register form handlers creates a new user account. *)
+let register req =
+  let open Lwt_result.Infix in
+  let form =
+    Form.(
+      let+ username = field "username"
+      and+ password = field "password"
+      and+ confirm_password = field "confirm_password" in
+      if String.equal password confirm_password then
+        Ok (username, password)
+      else
+        Error "passwords do not match")
+  in
+  response_of_result req
+    ( Form.validate form req >>= fun (username, password) ->
+      Auth.register ~username ~password req >>= fun _user ->
+      Lwt.return_ok (Some "Registered!") )
+
+(** Login form handler checks user's password and transition authentication
+    state. *)
 let login req =
   let open Lwt_result.Infix in
-  handle_action req
-    ( (match%lwt Dream.form req with
-      | `Ok fields -> (
-        match
-          (List.assoc_opt "username" fields, List.assoc_opt "password" fields)
-        with
-        | Some username, Some password -> Lwt.return_ok (username, password)
-        | _ -> Lwt.return_error "incorrect form submission")
-      | _ -> Lwt.return_error "invalid form submission")
-    >>= fun (username, password) ->
+  let form =
+    Form.(
+      let+ username = field "username"
+      and+ password = field "password" in
+      Ok (username, password))
+  in
+  response_of_result req
+    ( Form.validate form req >>= fun (username, password) ->
       match%lwt Auth.login ~username ~password req with
       | `Auth_none -> Lwt.return_error "incorrect username or password"
       | `Auth_awaiting_totp _ | `Auth_ok _ -> Lwt.return_ok None )
 
-let register req =
-  let open Lwt_result.Infix in
-  handle_action req
-    ( (match%lwt Dream.form req with
-      | `Ok fields -> (
-        match
-          ( List.assoc_opt "username" fields,
-            List.assoc_opt "password" fields,
-            List.assoc_opt "confirm_password" fields )
-        with
-        | Some username, Some password, Some confirm_password ->
-          if not (String.equal password confirm_password) then
-            Lwt.return_error "passwords do not match"
-          else
-            Lwt.return_ok (username, password)
-        | _ -> Lwt.return_error "incorrect form submission")
-      | _ -> Lwt.return_error "invalid form submission")
-    >>= fun (username, password) ->
-      Auth.register ~username ~password req >>= fun _user ->
-      Lwt.return_ok (Some "Registered!") )
-
-let totp req =
-  match%lwt Dream.form req with
-  | `Ok fields -> (
-    match List.assoc_opt "code" fields with
-    | Some code -> Lwt.return_ok code
-    | _ -> Lwt.return_error "missing totp")
-  | _ -> Lwt.return_error "invalid form submission"
-
 let login_verify req =
   let open Lwt_result.Infix in
-  handle_action req
-    ( totp req >>= fun totp ->
+  response_of_result req
+    ( Form.validate (Form.field "code") req >>= fun totp ->
       match%lwt Auth.verify_login req ~totp with
       | `Auth_ok _ -> Lwt.return_ok None
       | `Auth_none -> Lwt.return_error "something gone wrong, please try again"
@@ -197,16 +191,14 @@ let login_verify req =
 
 let totp_enable user req =
   let open Lwt_result.Infix in
-  handle_action req
-    ( (match%lwt Dream.form req with
-      | `Ok fields -> (
-        match
-          (List.assoc_opt "code" fields, List.assoc_opt "secret" fields)
-        with
-        | Some totp, Some secret -> Lwt.return_ok (totp, secret)
-        | _ -> Lwt.return_error "incorrect form submission")
-      | _ -> Lwt.return_error "invalid form submission")
-    >>= fun (totp, secret) ->
+  let form =
+    Form.(
+      let+ code = field "code"
+      and+ secret = field "secret" in
+      Ok (code, secret))
+  in
+  response_of_result req
+    ( Form.validate form req >>= fun (totp, secret) ->
       let user = { user with User.totp = Totp_enabled { secret } } in
       if User.verify_totp user ~totp then
         let%lwt () = User_repo.store user in
@@ -216,8 +208,8 @@ let totp_enable user req =
 
 let totp_disable user req =
   let open Lwt_result.Infix in
-  handle_action req
-    ( totp req >>= fun totp ->
+  response_of_result req
+    ( Form.validate (Form.field "code") req >>= fun totp ->
       if User.verify_totp user ~totp then
         let%lwt () = User_repo.store { user with User.totp = Totp_disabled } in
         Lwt.return_ok (Some "Two Factor Authentication disabled!")
@@ -226,11 +218,8 @@ let totp_disable user req =
 
 let logout _user req =
   let open Lwt_result.Infix in
-  handle_action req
-    ( (match%lwt Dream.form req with
-      | `Ok _ -> Lwt.return_ok ()
-      | _ -> Lwt.return_error "invalid form submission")
-    >>= fun () ->
+  response_of_result req
+    ( Form.validate Form.empty req >>= fun () ->
       let%lwt () = Auth.logout req in
       Lwt.return_ok None )
 
@@ -245,7 +234,7 @@ let () =
   @@ Dream.flash
   @@ Dream.router
        [
-         Dream.get "/" Page_template.main;
+         Dream.get "/" Page.main;
          Dream.post "/auth/login" login;
          Dream.post "/auth/login/verify" login_verify;
          Dream.post "/auth/register" register;

@@ -3,6 +3,7 @@ type t = {
   password_hash : string;
   totp : totp;
 }
+(** This type represents user accounts. *)
 
 and totp =
   | Totp_disabled

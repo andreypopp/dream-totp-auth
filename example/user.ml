@@ -23,5 +23,8 @@ let verify_password ~password user =
 
 let verify_totp ~totp user =
   match user.totp with
-  | Totp_disabled -> true
+  | Totp_disabled ->
+    (* The reasoning here is that if user has no TOTP enabled then we cannot
+       verify any TOTP code. *)
+    false
   | Totp_enabled { secret } -> Twostep.TOTP.verify ~secret ~code:totp ()
