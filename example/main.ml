@@ -21,23 +21,7 @@ module Page = struct
           .flash-error { color: red; }
           .flash-success { color: green; }
         </style>
-        <script>
-          function flash(category, text) {
-            let messages = document.getElementById('messages');
-            messages.innerHTML = `<p class="flash-${category}">${category}: ${text}</p>`;
-          }
-          function submit(form) {
-  let data = new FormData(form);
-  let params = new URLSearchParams(data);
-            return fetch(form.action, {
-              method: form.method,
-              body: params.toString(),
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-              }
-            });
-          }
-        </script>
+        <script src="/public/app.js"></script>
         <body>
           <div id="messages">%s</div>
           <div>%s</div>
@@ -49,73 +33,68 @@ module Page = struct
     Lwt.return
     @@ spf
          {|
-         <h3>Login</h3>
-         <form action="/auth/login" method="POST" id="login">
-           %s
-           <label>Username: <input type="text" name="username" /></label>
-           <label>Password: <input type="password" name="password" /></label>
-           <button type="submit">Login</button>
-         </form>
-         <form action="/auth/login/verify" method="POST" id="login-verify"
-           style="display: none">
-           %s
-           <input type="hidden" name="password" value="" />
-           <label>Enter code: <input type="text" name="code" /></label>
-           <button type="submit">Login</button>
-         </form>
-         <script>
-            let login = document.getElementById('login');
-            let loginVerify = document.getElementById('login-verify');
-            login.onsubmit = (ev) => {
-              ev.preventDefault();
-              let password = login.querySelector('input[name="password"]').value
-              submit(login).then(async resp => {
-                if (resp.ok) {
-                  let body = await resp.text();
-                  if (body.trim() === 'totp') {
-                    loginVerify.querySelector('input[name="password"]').value = password;
-                    login.style.display = 'none';
-                    loginVerify.style.display = 'block';
-                  } else {
-                    window.location.reload();
-                  }
-                } else {
-                  let body = await resp.text();
-                  flash('error', body.trim());
-                }
-              });
-            }
-            loginVerify.onsubmit = (ev) => {
-              ev.preventDefault();
-              submit(loginVerify).then(async resp => {
-                if (resp.ok) {
-                  window.location.reload();
-                } else {
-                  let body = await resp.text();
-                  flash('error', body.trim());
-                }
-              });
-            };
-         </script>
-         <hr />
-         <h3>Register</h3>
-         <form action="/auth/register" method="POST">
-           %s
-           <label>Username: <input type="text" name="username" /></label>
-           <label>Password: <input type="password" name="password" /></label>
-           <label>Confirm password: <input type="password" name="confirm_password" /></label>
-           <button type="submit">Register</button>
-         </form>
+          <div id="login">
+            <h3 id="title">Login</h3>
+            <form class="with-password" action="/auth/login" method="POST">
+              %s
+              <label>Username: <input type="text" name="username" /></label>
+              <label>Password: <input type="password" name="password" /></label>
+              <button type="submit">Login</button>
+            </form>
+            <h3 id="title">Login with email</h3>
+            <form class="with-email" action="/auth/login-with-email" method="POST">
+              %s
+              <label>Username: <input type="text" name="username" /></label>
+              <button type="submit">Login with email</button>
+            </form>
+          </div>
+          <div id="verify-totp" style="display: none">
+            <h3>Verify one time password</h3>
+            <form action="/auth/verify/totp" method="POST">
+              %s
+              <input type="hidden" name="password" value="" />
+              <label>Enter code: <input type="text" name="code" /></label>
+              <button type="submit">Login</button>
+            </form>
+          </div>
+          <div id="verify-email" style="display: none">
+            <h3>Verify email</h3>
+            <form class="verify" action="/auth/verify/email" method="POST">
+              %s
+              <label>Enter code: <input type="text" name="code" /></label>
+              <button type="submit">Login</button>
+            </form>
+            <form class="resend" action="/auth/verify/email-resend" method="POST">
+              %s
+              <button type="submit">Resend verification code</button>
+            </form>
+          </div>
+          <hr />
+          <div id="register">
+            <h3>Register</h3>
+            <form action="/auth/register" method="POST">
+              %s
+              <label>Username: <input type="text" name="username" /></label>
+              <label>Email: <input type="text" name="email" /></label>
+              <label>Password: <input type="password" name="password" /></label>
+              <label>Confirm password: <input type="password" name="confirm_password" /></label>
+              <button type="submit">Register</button>
+            </form>
+          </div>
+          <script>
+            window.addEventListener('DOMContentLoaded', startAuthFlow);
+          </script>
         |}
+         (Dream.csrf_tag req) (Dream.csrf_tag req) (Dream.csrf_tag req)
          (Dream.csrf_tag req) (Dream.csrf_tag req) (Dream.csrf_tag req)
 
   let totp_form user req =
-    match user.User.totp_secret_cipher with
+    match user.Data.user_totp_secret_cipher with
     | None ->
       let secret = Totp.make_secret () in
       let qr =
         Totp.secret_to_svg secret ~appname:"Dream OCaml"
-          ~username:user.User.username
+          ~username:user.Data.user_name
       in
       Lwt.return
       @@ spf
@@ -157,7 +136,7 @@ module Page = struct
           </form>
           %s
          |}
-         user.User.username (Dream.csrf_tag req) totp_form
+         user.Data.user_name (Dream.csrf_tag req) totp_form
 
   let main req =
     let%lwt content =
@@ -186,28 +165,30 @@ let response_of_result req result =
   in
   Dream.redirect req "/"
 
+let api_response_of_result result =
+  match%lwt result with
+  | Ok body -> Dream.respond ~status:`OK body
+  | Error msg -> Dream.respond ~status:`Bad_Request msg
+
 (** Register form handlers creates a new user account. *)
 let register req =
   let open Lwt_result.Infix in
   let form =
     Form.(
       let+ username = field "username"
+      and+ email = field "email"
       and+ password = field "password"
       and+ confirm_password = field "confirm_password" in
       if String.equal password confirm_password then
-        Ok (username, password)
+        Ok (username, email, password)
       else
         Error "passwords do not match")
   in
-  response_of_result req
-    ( Form.validate form req >>= fun (username, password) ->
-      Auth.register ~username ~password req >>= fun _user ->
-      Lwt.return_ok (Some "Registered!") )
-
-let login_response_of_result result =
-  match%lwt result with
-  | Ok body -> Dream.respond ~status:`OK body
-  | Error msg -> Dream.respond ~status:`Forbidden msg
+  api_response_of_result
+    ( Form.validate form req >>= fun (username, email, password) ->
+      Auth.register ~username ~email ~password req >>= fun registration ->
+      Dream.log "EMAIL OTP CODE: %s\n" registration.Auth.registration_email_otp;
+      Lwt.return_ok "email" )
 
 (** Login form handler checks user's password and transition authentication
     state. *)
@@ -219,14 +200,15 @@ let login req =
       and+ password = field "password" in
       Ok (username, password))
   in
-  login_response_of_result
+  api_response_of_result
     ( Form.validate form req >>= fun (username, password) ->
       match%lwt Auth.login ~username ~password req with
-      | `Auth_none -> Lwt.return_error "incorrect username or password"
-      | `Auth_awaiting_totp _ -> Lwt.return_ok "totp"
-      | `Auth_ok _ -> Lwt.return_ok "ok" )
+      | `User_anonymous -> Lwt.return_error "incorrect username or password"
+      | `User_awaiting_email_otp _ -> Lwt.return_ok "email"
+      | `User_awaiting_totp _ -> Lwt.return_ok "totp"
+      | `User_authenticated _ -> Lwt.return_ok "ok" )
 
-let login_verify req =
+let verify_totp req =
   let open Lwt_result.Infix in
   let form =
     Form.(
@@ -234,12 +216,46 @@ let login_verify req =
       and+ password = field "password" in
       Ok (code, password))
   in
-  login_response_of_result
+  api_response_of_result
     ( Form.validate form req >>= fun (totp, password) ->
-      match%lwt Auth.verify_login req ~totp ~password with
-      | `Auth_ok _ -> Lwt.return_ok "ok"
-      | `Auth_none -> Lwt.return_error "something gone wrong, please try again"
-      | `Auth_awaiting_totp _ -> Lwt.return_error "invalid TOTP" )
+      match%lwt Auth.verify_totp req ~totp ~password with
+      | `User_authenticated _ -> Lwt.return_ok "ok"
+      | `User_anonymous ->
+        Lwt.return_error "something went wrong, please try again"
+      | `User_awaiting_totp _ | `User_awaiting_email_otp _ ->
+        Lwt.return_error "invalid TOTP" )
+
+let verify_email req =
+  let open Lwt_result.Infix in
+  let form = Form.(field "code") in
+  api_response_of_result
+    ( Form.validate form req >>= fun otp ->
+      match%lwt Auth.verify_email_otp req ~otp with
+      | `User_authenticated _ -> Lwt.return_ok "ok"
+      | `User_anonymous ->
+        Lwt.return_error "something went wrong, please try again"
+      | `User_awaiting_email_otp _ | `User_awaiting_totp _ ->
+        Lwt.return_error "invalid OTP" )
+
+let login_with_email req =
+  let open Lwt_result.Infix in
+  api_response_of_result
+    ( Form.validate (Form.field "username") req >>= fun username ->
+      match%lwt Auth.login_with_email_otp ~username req with
+      | Some otp ->
+        Dream.log "EMAIL OTP CODE: %s\n" otp;
+        Lwt.return_ok "email"
+      | None -> Lwt.return_error "something went wrong, please try again" )
+
+let verify_email_resend req =
+  let open Lwt_result.Infix in
+  api_response_of_result
+    ( Form.validate Form.empty req >>= fun () ->
+      match%lwt Auth.refresh_email_otp req with
+      | None -> Lwt.return_error "something went wrong, please try again"
+      | Some otp ->
+        Dream.log "EMAIL OTP CODE: %s\n" otp;
+        Lwt.return_ok "ok" )
 
 let totp_enable user req =
   let open Lwt_result.Infix in
@@ -288,9 +304,13 @@ let () =
        [
          Dream.get "/" Page.main;
          Dream.post "/auth/login" login;
-         Dream.post "/auth/login/verify" login_verify;
+         Dream.post "/auth/login-with-email" login_with_email;
+         Dream.post "/auth/verify/totp" verify_totp;
+         Dream.post "/auth/verify/email" verify_email;
+         Dream.post "/auth/verify/email-resend" verify_email_resend;
          Dream.post "/auth/register" register;
          Dream.post "/auth/totp/enable" (Auth.with_user totp_enable);
          Dream.post "/auth/totp/disable" (Auth.with_user totp_disable);
          Dream.post "/auth/logout" (Auth.with_user logout);
+         Dream.get "/public/**" @@ Dream.static "public";
        ]

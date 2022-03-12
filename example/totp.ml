@@ -8,32 +8,28 @@ let secret_to_svg ~appname ~username secret =
 
 let make_secret () = Twostep.TOTP.secret ()
 
-module Seen = struct
-  (* a very naive storage for used TOTP codes *)
-  let by_id : (string, (string * float) list) Hashtbl.t = Hashtbl.create 100
-  let find id = Hashtbl.find_opt by_id id
-  let update id seen = Hashtbl.replace by_id id seen
-  let lock = Lwt_mutex.create ()
-end
-
-let verify ~id ~totp secret =
-  Lwt_mutex.with_lock Seen.lock (fun () ->
+let verify ~username ~totp secret =
+  Data.Totp.transaction (fun () ->
       let window = 30 in
       let now = Unix.gettimeofday () in
       (* Garbage collect old seen totp codes if they are older than 3 windows. It
          is safe to do because they are not longer valid anyway. *)
-      let seen =
-        match Seen.find id with
-        | None -> []
-        | Some ((_, prev) :: _) when now -. prev > Float.of_int (3 * window) ->
-          []
-        | Some seen -> seen
+      let%lwt seen =
+        match%lwt Data.Totp.find username with
+        | None -> Lwt.return []
+        | Some { Data.totp_code = (_, prev) :: _; _ }
+          when now -. prev > Float.of_int (3 * window) -> Lwt.return []
+        | Some { Data.totp_code; _ } -> Lwt.return totp_code
       in
-      Lwt.return
-        (match List.assoc_opt totp seen with
-        | Some _ -> false
-        | None ->
-          let ok = Twostep.TOTP.verify ~window ~secret ~code:totp () in
+      match List.assoc_opt totp seen with
+      | Some _ -> Lwt.return false
+      | None ->
+        let ok = Twostep.TOTP.verify ~window ~secret ~code:totp () in
+        let%lwt () =
           if ok then
-            Seen.update id ((totp, now) :: seen);
-          ok))
+            Data.Totp.store
+              { Data.totp_username = username; totp_code = (totp, now) :: seen }
+          else
+            Lwt.return ()
+        in
+        Lwt.return ok)

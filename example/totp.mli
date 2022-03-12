@@ -4,5 +4,5 @@ val secret_to_svg : appname:string -> username:string -> string -> string
 val make_secret : unit -> string
 (** Make new secret. *)
 
-val verify : id:string -> totp:string -> string -> bool Lwt.t
+val verify : username:string -> totp:string -> string -> bool Lwt.t
 (** Verify TOTP against secret. *)

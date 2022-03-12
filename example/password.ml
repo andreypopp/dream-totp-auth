@@ -64,4 +64,5 @@ let hash password =
 let verify ~hash password =
   match Argon2.verify ~encoded:hash ~pwd:password ~kind:ID with
   | Ok result -> result
+  | Error Argon2.ErrorCodes.VERIFY_MISMATCH -> false
   | Error e -> failwith (Argon2.ErrorCodes.message e)
