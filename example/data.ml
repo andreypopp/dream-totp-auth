@@ -58,7 +58,7 @@ module Users =
 
 type email_otp = {
   email_otp_email : string;
-  email_otp_code : string;
+  email_otp : string option;
 }
 
 module Email_otp =

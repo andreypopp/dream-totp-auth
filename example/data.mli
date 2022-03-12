@@ -28,7 +28,7 @@ module Users : REPO with type t = user
 
 type email_otp = {
   email_otp_email : string;
-  email_otp_code : string;
+  email_otp : string option;
 }
 
 module Email_otp : REPO with type t = email_otp

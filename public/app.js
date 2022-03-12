@@ -19,8 +19,9 @@ function startAuthFlow() {
   let verifyTotp = document.getElementById('verify-totp');
   let verifyEmail = document.getElementById('verify-email');
 
-  function transitionVerifyTotp(password) {
+  function transitionVerifyTotp(username, password) {
     flashClear();
+    verifyTotp.querySelector('input[name="username"]').value = username;
     verifyTotp.querySelector('input[name="password"]').value = password;
     login.style.display = 'none';
     register.style.display = 'none';
@@ -28,8 +29,14 @@ function startAuthFlow() {
     verifyEmail.style.display = 'none';
   }
 
-  function transitionVerifyEmail() {
+  function transitionVerifyEmail(username, password) {
     flashClear();
+    verifyEmail.querySelector('form.verify input[name="username"]').value = username;
+    verifyEmail.querySelector('form.resend input[name="username"]').value = username;
+    if (password != null) {
+      verifyEmail.querySelector('form.verify input[name="password"]').value = password;
+      verifyEmail.querySelector('form.resend input[name="password"]').value = password;
+    }
     login.style.display = 'none';
     register.style.display = 'none';
     verifyTotp.style.display = 'none';
@@ -41,26 +48,28 @@ function startAuthFlow() {
     window.location.reload();
   }
 
-  login.querySelector('.with-password').onsubmit = (ev) => {
+  login.querySelector('form.with-password').onsubmit = (ev) => {
     ev.preventDefault();
-    let password = login.querySelector('input[name="password"]').value
+    let username = ev.target.querySelector('input[name="username"]').value
+    let password = ev.target.querySelector('input[name="password"]').value
     submit(ev.target).then(async resp => {
       if (resp.ok) {
         let status = await resp.text();
         if (status === 'ok') transitionFinal();
-        else if (status === 'totp') transitionVerifyTotp(password);
-        else if (status === 'email') transitionVerifyEmail();
+        else if (status === 'totp') transitionVerifyTotp(username, password);
+        else if (status === 'email') transitionVerifyEmail(username, password);
         else flash('error', `server returned unknown response: ${status}`);
       } else flash('error', await resp.text());
     });
   }
 
-  login.querySelector('.with-email').onsubmit = (ev) => {
+  login.querySelector('form.with-email').onsubmit = (ev) => {
     ev.preventDefault();
+    let username = ev.target.querySelector('input[name="username"]').value
     submit(ev.target).then(async resp => {
       if (resp.ok) {
         let status = await resp.text();
-        if (status === 'email') transitionVerifyEmail();
+        if (status === 'email') transitionVerifyEmail(username);
         else flash('error', `server returned unknown response: ${status}`);
       } else flash('error', await resp.text());
     });
@@ -68,10 +77,12 @@ function startAuthFlow() {
 
   register.querySelector('form').onsubmit = (ev) => {
     ev.preventDefault();
+    let username = ev.target.querySelector('input[name="username"]').value
+    let password = ev.target.querySelector('input[name="password"]').value
     submit(ev.target).then(async resp => {
       if (resp.ok) {
         let status = await resp.text();
-        if (status === 'email') transitionVerifyEmail();
+        if (status === 'email') transitionVerifyEmail(username, password);
         else flash('error', `server returned unknown response: ${status}`);
       } else flash('error', await resp.text());
     });
@@ -85,7 +96,7 @@ function startAuthFlow() {
     });
   };
 
-  verifyEmail.querySelector('.verify').onsubmit = (ev) => {
+  verifyEmail.querySelector('form.verify').onsubmit = (ev) => {
     ev.preventDefault();
     submit(ev.target).then(async resp => {
       if (resp.ok) transitionFinal();
@@ -93,10 +104,10 @@ function startAuthFlow() {
     });
   };
 
-  verifyEmail.querySelector('.resend').onsubmit = (ev) => {
+  verifyEmail.querySelector('form.resend').onsubmit = (ev) => {
     ev.preventDefault();
     submit(ev.target).then(async resp => {
-      if (resp.ok) flash('success', 'Check your email');
+      if (resp.ok) return;
       else flash('error', await resp.text());
     });
   };

@@ -2,7 +2,14 @@ type 'a t
 (** [a t] represents a form parser which produces a value of type [a]. *)
 
 val field : string -> string t
-(** [field name] parses a string typed value for form field [name]. *)
+(** [field name] parses a string typed value for form field [name].
+
+    Absence of a field or an empty string value results in a validation error. *)
+
+val field_opt : string -> string option t
+(** [field_opt name] parses a string typed value for form field [name].
+
+    Absence of a field or an empty string value results in [None]. *)
 
 val map : 'a t -> ('a -> ('b, string) result) -> 'b t
 (** [map v f] validates [v] with [f]. *)

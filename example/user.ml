@@ -11,10 +11,12 @@ let make ~username ~email ~password () =
 let verify_password ~password user =
   Password.verify ~hash:user.Data.user_password_hash password
 
-let verify_email ~code user =
+let verify_email_otp ~otp user =
   match%lwt Data.Email_otp.find user.Data.user_email with
   | None -> Lwt.return false
-  | Some otp -> Lwt.return (String.equal code otp.email_otp_code)
+  | Some { email_otp = None; _ } -> Lwt.return false
+  | Some { email_otp = Some email_otp; _ } ->
+    Lwt.return (String.equal otp email_otp)
 
 let verify_totp ~password ~totp user =
   match user.Data.user_totp_secret_cipher with

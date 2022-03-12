@@ -49,24 +49,29 @@ module Page = struct
             </form>
           </div>
           <div id="verify-totp" style="display: none">
-            <h3>Verify one time password</h3>
+            <h3>Verify TOTP</h3>
             <form action="/auth/verify/totp" method="POST">
               %s
+              <input type="hidden" name="username" value="" />
               <input type="hidden" name="password" value="" />
-              <label>Enter code: <input type="text" name="code" /></label>
+              <label>Enter TOTP: <input type="text" name="totp" /></label>
               <button type="submit">Login</button>
             </form>
           </div>
           <div id="verify-email" style="display: none">
-            <h3>Verify email</h3>
+            <h3>Verify email OTP</h3>
             <form class="verify" action="/auth/verify/email" method="POST">
               %s
-              <label>Enter code: <input type="text" name="code" /></label>
+              <input type="hidden" name="username" value="" />
+              <input type="hidden" name="password" value="" />
+              <label>Enter email OTP: <input type="text" name="otp" /></label>
               <button type="submit">Login</button>
             </form>
-            <form class="resend" action="/auth/verify/email-resend" method="POST">
+            <form class="resend" action="/auth/login-with-email" method="POST">
               %s
-              <button type="submit">Resend verification code</button>
+              <input type="hidden" name="username" value="" />
+              <input type="hidden" name="password" value="" />
+              <button type="submit">Resend email OTP</button>
             </form>
           </div>
           <hr />
@@ -104,7 +109,7 @@ module Page = struct
              %s
              <input type="hidden" name="secret" value="%s" />
              %s
-             <label>Enter code: <input type="text" name="code" /></label>
+             <label>Enter totp: <input type="text" name="totp" /></label>
              <label>Password: <input type="password" name="password" /></label>
              <button type="submit">Enable</button>
            </form>
@@ -117,7 +122,7 @@ module Page = struct
            <h4>Two Factor Authentication: Enabled</h4>
            <form action="/auth/totp/disable" method="POST">
              %s
-             <label>Enter code: <input type="text" name="code" /></label>
+             <label>Enter totp: <input type="text" name="totp" /></label>
              <label>Password: <input type="password" name="password" /></label>
              <button type="submit">Disable</button>
            </form>
@@ -202,69 +207,66 @@ let login req =
   in
   api_response_of_result
     ( Form.validate form req >>= fun (username, password) ->
-      match%lwt Auth.login ~username ~password req with
-      | `User_anonymous -> Lwt.return_error "incorrect username or password"
-      | `User_awaiting_email_otp _ -> Lwt.return_ok "email"
-      | `User_awaiting_totp _ -> Lwt.return_ok "totp"
-      | `User_authenticated _ -> Lwt.return_ok "ok" )
+      match%lwt Auth.verify_password ~username ~password req with
+      | None -> Lwt.return_error "incorrect username or password"
+      | Some (`User_awaiting_email_otp _) -> Lwt.return_ok "email"
+      | Some (`User_awaiting_totp _) -> Lwt.return_ok "totp"
+      | Some (`User_authenticated _) -> Lwt.return_ok "ok" )
 
 let verify_totp req =
   let open Lwt_result.Infix in
   let form =
     Form.(
-      let+ code = field "code"
-      and+ password = field "password" in
-      Ok (code, password))
+      let+ username = field "username"
+      and+ password = field "password"
+      and+ totp = field "totp" in
+      Ok (username, password, totp))
   in
   api_response_of_result
-    ( Form.validate form req >>= fun (totp, password) ->
-      match%lwt Auth.verify_totp req ~totp ~password with
-      | `User_authenticated _ -> Lwt.return_ok "ok"
-      | `User_anonymous ->
-        Lwt.return_error "something went wrong, please try again"
-      | `User_awaiting_totp _ | `User_awaiting_email_otp _ ->
-        Lwt.return_error "invalid TOTP" )
+    ( Form.validate form req >>= fun (username, password, totp) ->
+      match%lwt Auth.verify_totp req ~username ~password ~totp with
+      | Some (`User_authenticated _) -> Lwt.return_ok "ok"
+      | None -> Lwt.return_error "something went wrong, please try again" )
 
-let verify_email req =
+let verify_email_otp req =
   let open Lwt_result.Infix in
-  let form = Form.(field "code") in
+  let form =
+    Form.(
+      let+ username = field "username"
+      and+ password = field_opt "password"
+      and+ otp = field "otp" in
+      Ok (username, password, otp))
+  in
   api_response_of_result
-    ( Form.validate form req >>= fun otp ->
-      match%lwt Auth.verify_email_otp req ~otp with
-      | `User_authenticated _ -> Lwt.return_ok "ok"
-      | `User_anonymous ->
-        Lwt.return_error "something went wrong, please try again"
-      | `User_awaiting_email_otp _ | `User_awaiting_totp _ ->
-        Lwt.return_error "invalid OTP" )
+    ( Form.validate form req >>= fun (username, password, otp) ->
+      match%lwt Auth.verify_email_otp req ~username ~password ~otp with
+      | Some (`User_authenticated _) -> Lwt.return_ok "ok"
+      | None -> Lwt.return_error "invalid OTP" )
 
 let login_with_email req =
   let open Lwt_result.Infix in
   api_response_of_result
-    ( Form.validate (Form.field "username") req >>= fun username ->
-      match%lwt Auth.login_with_email_otp ~username req with
+    ( Form.validate
+        Form.(
+          let+ username = field "username"
+          and+ password = field_opt "password" in
+          Ok (username, password))
+        req
+    >>= fun (username, password) ->
+      match%lwt Auth.email_otp ~username ~password req with
       | Some otp ->
         Dream.log "EMAIL OTP CODE: %s\n" otp;
         Lwt.return_ok "email"
-      | None -> Lwt.return_error "something went wrong, please try again" )
-
-let verify_email_resend req =
-  let open Lwt_result.Infix in
-  api_response_of_result
-    ( Form.validate Form.empty req >>= fun () ->
-      match%lwt Auth.refresh_email_otp req with
-      | None -> Lwt.return_error "something went wrong, please try again"
-      | Some otp ->
-        Dream.log "EMAIL OTP CODE: %s\n" otp;
-        Lwt.return_ok "ok" )
+      | None -> Lwt.return_error "login via email is not available" )
 
 let totp_enable user req =
   let open Lwt_result.Infix in
   let form =
     Form.(
-      let+ code = field "code"
+      let+ totp = field "totp"
       and+ secret = field "secret"
       and+ password = field "password" in
-      Ok (code, secret, password))
+      Ok (totp, secret, password))
   in
   response_of_result req
     ( Form.validate form req >>= fun (totp, secret, password) ->
@@ -275,9 +277,9 @@ let totp_disable user req =
   let open Lwt_result.Infix in
   let form =
     Form.(
-      let+ code = field "code"
+      let+ totp = field "totp"
       and+ password = field "password" in
-      Ok (code, password))
+      Ok (totp, password))
   in
   response_of_result req
     ( Form.validate form req >>= fun (totp, password) ->
@@ -306,8 +308,7 @@ let () =
          Dream.post "/auth/login" login;
          Dream.post "/auth/login-with-email" login_with_email;
          Dream.post "/auth/verify/totp" verify_totp;
-         Dream.post "/auth/verify/email" verify_email;
-         Dream.post "/auth/verify/email-resend" verify_email_resend;
+         Dream.post "/auth/verify/email" verify_email_otp;
          Dream.post "/auth/register" register;
          Dream.post "/auth/totp/enable" (Auth.with_user totp_enable);
          Dream.post "/auth/totp/disable" (Auth.with_user totp_disable);

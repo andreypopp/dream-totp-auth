@@ -1,6 +1,6 @@
 # dream-totp-auth
 
-An example [Dream][] app with password (+ optional TOTP) based authentication:
+An example [Dream][] app with password + TOTP + email OTP auth:
 
 - [argon2][] is used for password hashing
 - [twostep][] is used for TOTP (secret generation and verification)

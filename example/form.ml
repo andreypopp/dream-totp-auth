@@ -1,12 +1,14 @@
 type _ t =
   | Form_value : 'a -> 'a t
   | Form_field : string -> string t
+  | Form_field_opt : string -> string option t
   | Form_map : 'a t * ('a -> ('b, string) result) -> 'b t
   | Form_both : 'a t * 'b t -> ('a * 'b) t
 
 let value v = Form_value v
 let empty = Form_value ()
 let field name = Form_field name
+let field_opt name = Form_field_opt name
 let map v f = Form_map (v, f)
 let both a b = Form_both (a, b)
 let ( let+ ) = map
@@ -22,8 +24,13 @@ let validate' form (fields : (string * string) list) =
       | Error err, _ | _, Error err -> Error err)
     | Form_field name -> (
       match List.assoc_opt name fields with
-      | None -> Error (Printf.sprintf "%s field value is missing" name)
+      | None | Some "" ->
+        Error (Printf.sprintf "%s field value is missing" name)
       | Some v -> Ok v)
+    | Form_field_opt name -> (
+      match List.assoc_opt name fields with
+      | None | Some "" -> Ok None
+      | Some v -> Ok (Some v))
   in
   aux form
 
