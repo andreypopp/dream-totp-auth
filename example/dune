@@ -4,3 +4,8 @@
  (preprocess
   (pps lwt_ppx))
  (libraries dream dream.cipher argon2 twostep qrc yojson))
+
+(rule
+ (targets page.ml)
+ (deps page.eml.ml)
+ (action (run dream_eml %{deps} --workspace %{workspace_root})))
