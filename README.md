@@ -8,6 +8,15 @@ An example [Dream][] app with password + TOTP + email OTP auth:
 
 Few notes:
 
+- The app is a toy example:
+
+  - No real email interactions - the OTP codes are simply printed on terminal.
+    It's up to a real application to decide how to send emails.
+
+  - No persistent storage and no proper abstraction for it. I've just
+    consolidated the API for persistent storage and expected data types in
+    `Data` module but all other code use it directly.
+
 - User registration process asks for username, email and password:
 
   - After initial registration form user is asked to confirm email by entering an
