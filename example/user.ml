@@ -15,8 +15,12 @@ let verify_email_otp ~otp user =
   match%lwt Data.Email_otp.find user.Data.user_email with
   | None -> Lwt.return false
   | Some { email_otp = None; _ } -> Lwt.return false
-  | Some { email_otp = Some email_otp; _ } ->
-    Lwt.return (String.equal otp email_otp)
+  | Some ({ email_otp = Some email_otp; _ } as record) ->
+    if String.equal otp email_otp then
+      let%lwt () = Data.Email_otp.store { record with Data.email_otp = None } in
+      Lwt.return true
+    else
+      Lwt.return false
 
 let verify_totp ~password ~totp user =
   match user.Data.user_totp_secret_cipher with
