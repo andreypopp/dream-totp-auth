@@ -96,10 +96,10 @@ type verify_email_otp_transition = [`User_authenticated of Data.user]
 
 let verify_email_otp ~username ~password ~otp req :
     verify_email_otp_transition option Lwt.t =
-  match%lwt Data.Users.find username with
-  | Some user -> (
-    match%lwt Dream.verify_csrf_token req otp with
-    | `Ok -> (
+  match%lwt Dream.verify_csrf_token req otp with
+  | `Ok -> (
+    match%lwt Data.Users.find username with
+    | Some user -> (
       match (user.Data.user_email_verification, password) with
       | Email_confirmed, _ ->
         if%lwt User.verify_email_otp user ~otp then
@@ -125,8 +125,8 @@ let verify_email_otp ~username ~password ~otp req :
             Lwt.return_none
         else
           Lwt.return_none)
-    | `Expired _ | `Wrong_session | `Invalid -> Lwt.return_none)
-  | None -> Lwt.return_none
+    | None -> Lwt.return_none)
+  | `Expired _ | `Wrong_session | `Invalid -> Lwt.return_none
 
 type verify_totp_transition = [`User_authenticated of Data.user]
 
